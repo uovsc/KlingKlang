@@ -1,0 +1,136 @@
+# SPEC.md — KlingKlang (working title)
+
+## 1. Vision
+
+A small C# library that makes audio playback in desktop games as straightforward as loading a sound and calling `Play`. Distribution should be close to copying the application's managed assemblies: no BASS, SDL, OpenAL, separate audio server installer or platform-specific binaries shipped by this project.
+
+This is an AI-assisted learning/hobby project. The first deliverable is a reliable, understandable baseline, not a complete replacement for ManagedBass.
+
+## 2. Supported environments
+
+| Platform | Planned backend | Distribution assumption |
+| --- | --- | --- |
+| Windows (current supported desktop releases) | WASAPI shared mode | OS audio components already present |
+| macOS (current supported desktop releases) | Audio Queue Services / CoreAudio | OS frameworks already present |
+| Linux desktop | ALSA PCM | `libasound` and a working configured audio output must be available; PipeWire/PulseAudio compatibility depends on system configuration |
+
+Target framework for the initial project: `net10.0`. Use only the base class library and standard .NET interop at runtime. The consuming app still needs a compatible .NET runtime or self-contained .NET deployment. A portable managed DLL does not remove these OS/runtime requirements.
+
+## 3. MVP scope (v0.1)
+
+### Must have
+
+- Load WAV files containing uncompressed PCM 16-bit little-endian, mono or stereo, with robust RIFF chunk parsing.
+- Decode once at load time to an immutable in-memory `AudioClip` with interleaved float samples.
+- Play multiple copies of one clip and different clips simultaneously; target a configurable capacity of 64 active voices.
+- Play once or loop; set per-voice gain; stop individual voices; stop all; query whether a handle is still active.
+- A small public API shared across all platforms; automatic OS backend selection, with meaningful initialization errors.
+- Internal stereo float32 mixing, safe handling of overlapping clips, end-of-clip boundaries and clipping on device output.
+- Clean start/stop and disposal without orphaned audio threads or native handles.
+- Deterministic unit tests that run without audio hardware, and a tiny console sample.
+- Document actual support status separately for each OS and its tested configurations.
+
+### Not in v0.1
+
+Recording, microphone input, MP3/FLAC/Vorbis/Opus decoding, streaming large assets from disk, spatial/3D audio, pitch shifting, effects, MIDI, device enumeration UI, ASIO, exclusive mode, mobile/browser platforms and guaranteed ultra-low latency.
+
+## 4. Example public API (design target, subject to tests)
+
+```csharp
+using KlingKlang;
+
+using var audio = AudioEngine.Create();
+using var explosion = audio.LoadWav("assets/explosion.wav");
+
+VoiceHandle first = audio.Play(explosion);
+VoiceHandle second = audio.Play(explosion, volume: 0.5f, loop: true);
+
+audio.SetVolume(second, 0.25f);
+audio.Stop(second);
+```
+
+Public API constraints:
+
+- `AudioEngine` owns the device, command queue and voices; `AudioClip` owns decoded samples; disposing an engine stops its voices and closes the device.
+- Specify explicitly what happens if a clip is disposed while it is playing; preferred MVP behavior: active voices retain access to their immutable samples until they finish or stop.
+- Handles must use a generation/version to prevent stale references from accidentally controlling a recycled voice slot.
+- Validate volume as finite and nonnegative; default `1.0f`. Specify a sensible upper bound or clamp policy in code and tests.
+- Define whether `Play` becomes audible asynchronously (expected) and whether a full voice pool rejects playback or replaces an existing voice (preferred MVP: reject with a documented result).
+- Do not expose backend details to game callers.
+
+## 5. Internal audio model
+
+- Standard mix format: interleaved stereo, float32, nominal 48 kHz.
+- Backend must negotiate actual device format and convert as needed. Do not assume every device supports the nominal format.
+- Initial decoder accepts source sample rates of 48 kHz only **or** provides a tested conversion path before accepting other sample rates. Never reinterpret samples at the wrong playback speed. Preferred MVP: reject mismatched sample rates with a clear error until simple resampling is implemented.
+- One active voice has clip reference, frame cursor, gain, loop flag and generation ID.
+- The mixer sums active voices into an output buffer that is zeroed once per render block. Mono inputs are duplicated to both output channels.
+- No allocations or lock contention inside normal render blocks after warmup. Game commands cross a bounded queue and are applied at safe block boundaries.
+- Final output conversion handles supported hardware sample types, clipping and interleaving.
+
+## 6. Device backend contract
+
+Conceptual interface (not necessarily the exact final C# signature):
+
+```csharp
+internal interface IAudioDevice : IDisposable
+{
+    AudioDeviceFormat Format { get; }
+    void Start(AudioRenderCallback render);
+    void Stop();
+}
+
+internal delegate void AudioRenderCallback(Span<float> interleavedOutput);
+```
+
+This is a conceptual callback contract; the actual implementation must respect callback lifetime, thread ownership and native ABI details. Backends may internally use event-driven loops or synchronous writes rather than a native callback.
+
+The backend must report negotiated sample rate/channel format, provide a steady output cycle, handle partial writes/underruns where applicable, propagate failures safely and release every native resource. Use a `NullAudioDevice` for tests and offline rendering.
+
+## 7. Nonfunctional requirements
+
+1. **Deployment:** No third-party runtime NuGet packages or bundled unmanaged audio DLLs. Document the .NET runtime requirement and Linux ALSA prerequisite clearly.
+2. **Reliability:** Never read beyond sample buffers. Malformed assets return controlled exceptions. A failed device initialization does not leak handles or leave a thread running.
+3. **Latency:** Aim for responsive gameplay. A nominal 10–20 ms render block is a starting point, not a guarantee of end-to-end latency; measure the actual backend buffering.
+4. **Performance:** Support at least 64 concurrent short clips on ordinary desktop hardware without render-thread allocations, subject to benchmark verification.
+5. **Compatibility:** No compile-time platform-specific public types; backend selection via `OperatingSystem.IsWindows/IsLinux/IsMacOS`.
+6. **Observability:** Provide non-realtime-safe diagnostics for startup failures and counts of underruns/voices without logging directly from the audio render path.
+
+## 8. Milestones and acceptance criteria
+
+### M0 — Offline vertical slice
+
+- Repository builds with .NET 10; tests run without an audio device.
+- WAV PCM16 mono/stereo decoding works, including unknown RIFF chunks and malformed input handling.
+- A generated tone and two overlapping voices can be mixed and exported as a valid WAV for listening.
+- Volume, looping, voice completion and stop are covered by tests.
+
+### M1 — First live backend
+
+- WASAPI shared-mode audio on a real Windows machine.
+- A console sample loads a WAV, plays it repeatedly, changes volume and exits cleanly.
+- Repeated opening/closing works; device initialization failures are intelligible.
+
+### M2 — Three-platform playback
+
+- Add and smoke-test ALSA on Linux and Audio Queue/CoreAudio on macOS.
+- Document precise tested OS versions, architectures, hardware paths and Linux prerequisites.
+- Build artifacts contain no third-party native binary payloads.
+
+### M3 — Harden for games
+
+- Introduce bounded, nonblocking command handling and generation-safe voice handles if not already present.
+- Test simultaneous plays/stops from gameplay threads, exhaustion behavior, underrun recovery and device-unplug scenarios where feasible.
+- Benchmark render allocations and throughput; document known device limitations.
+
+## 9. Explicit risks and decisions to revisit
+
+- **Linux portability:** ALSA is a system library, not guaranteed everywhere. Avoid promising literally zero Linux prerequisites; consider PipeWire native support only if real user feedback warrants it.
+- **Sample rates:** Starting with 48 kHz-only clips is simpler but restrictive. Implement measured, tested resampling before advertising arbitrary-rate WAV support.
+- **Device format:** `float32` is an internal format; WASAPI/ALSA/macOS backends must negotiate and/or convert correctly.
+- **Platform testing:** Code generation and cross-compilation are not equivalent to playback verification on real systems.
+- **AI-generated implementation:** Every interop signature, buffer lifetime, callback convention and failure path must be checked against primary OS documentation and tested. Generated code is a draft until verified.
+
+## 10. Definition of done for v0.1
+
+An example app can load and play short WAV PCM16 sounds, overlap them, change volume, loop and stop, on Windows, Linux and macOS with a single public API. The project ships no third-party native audio binaries, its prerequisites are documented, automated offline tests pass, and real-device smoke tests have passed separately on all three platforms. Until then, mark unsupported or untested backends honestly.

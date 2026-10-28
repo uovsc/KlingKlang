@@ -1,0 +1,22 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Build library Release",
+			"type": "shell",
+			"command": "dotnet",
+			"args": [
+				"build",
+				"${workspaceFolder}/src/KlingKlang/KlingKlang.csproj",
+				"--configuration",
+				"Release",
+				"--output",
+				"${workspaceFolder}/src/KlingKlang/bin/Release/net10.0"
+			],
+			"problemMatcher": [
+				"$msCompile"
+			],
+			"group": "build"
+		}
+	]
+}

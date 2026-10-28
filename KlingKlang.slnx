@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/samples/">
+    <Project Path="samples/KlingKlang.Demo/KlingKlang.Demo.csproj" />
+    <Project Path="samples/KlingKlang.LiveDemo/KlingKlang.LiveDemo.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/KlingKlang/KlingKlang.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/KlingKlang.Tests/KlingKlang.Tests.csproj" />
+  </Folder>
+</Solution>
