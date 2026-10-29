@@ -17,6 +17,21 @@
 				"$msCompile"
 			],
 			"group": "build"
+		},
+		{
+			"label": "Count source lines",
+			"type": "shell",
+			"command": "pwsh",
+			"args": [
+				"-NoLogo",
+				"-NoProfile",
+				"-File",
+				"${workspaceFolder}/.github/skills/count-lines/count-lines.ps1"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"problemMatcher": []
 		}
 	]
 }
