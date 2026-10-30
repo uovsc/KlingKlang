@@ -1,5 +1,6 @@
 using KlingKlang;
 
+
 if (args.Length != 1)
 {
     Console.Error.WriteLine("Usage: KlingKlang.LiveDemo <48-kHz-PCM16-WAV>");
@@ -8,17 +9,14 @@ if (args.Length != 1)
 
 AudioClip clip = AudioClip.LoadWav(args[0]);
 AudioEngine audio = AudioEngine.Create();
-
-
+bool isFullPlay = true;
 try
 {
-    VoiceHandle voice = audio.Play(clip, loop: false);
-    while(audio.IsPlaying(voice)) { 
-        Thread.Sleep(100); 
-    }
-    voice = audio.Play(clip, loop: false);
-    while(audio.IsPlaying(voice)) { 
-        Thread.Sleep(100); 
+    if(isFullPlay)
+        PlayFull();
+    else {
+        PlayFading(10000, 2000);
+        PlayFading(5000, 1000);
     }
     return 0;
 }
@@ -34,36 +32,23 @@ finally
     clip.Dispose();
 }
 
+void PlayFull()
+{
+    VoiceHandle voice = audio.Play(clip, loop: false);
+    while(audio.IsPlaying(voice)) { 
+        Thread.Sleep(100); 
+    }
+}
 
-/*
-        private AudioEngine? audio = null;
-        private AudioClip? clip = null;
+void PlayFading(int fullDuration, int fadeDuration, float steps=10f)
+{
+    VoiceHandle voice = audio.Play(clip, loop: false);
+    Thread.Sleep(fullDuration);
 
-
-        public MainWindow()
-        {
-            InitializeComponent();
-
-            SelectInput(InputMM);
-
-            DataContextChanged += MainWindow_DataContextChanged;
-
-            audio = AudioEngine.Create();
-            clip = LoadClip($"/home/ufo/Dev/DevN/GodMorgon3/GodMorgon/Assets/alarm2.wav");     
-        }
-
-        private void TimerItemFinished(object? sender, System.EventArgs e) {
-            try {
-                Dispatcher.UIThread.Post(() =>
-                {
-                    VoiceHandle voice = audio.Play(clip, loop: false);
-                    while(audio.IsPlaying(voice)) { 
-                        Thread.Sleep(100); 
-                    }
-                });
-            } 
-            catch (Exception ex)
-            {
-                Console.WriteLine(ex.Message + ex.InnerException.Message);
-            }
-        }*/
+    for(float volume = 1.0f; volume >= 0.0f; volume -= 1.0f/steps)
+    {
+        audio.SetVolume(voice, volume);
+        Console.WriteLine($"Volume: {Math.Round(volume * 100)}%");
+        Thread.Sleep(fadeDuration/(int)steps);
+    }
+}

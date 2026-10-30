@@ -123,6 +123,13 @@ The backend must report negotiated sample rate/channel format, provide a steady 
 - Test simultaneous plays/stops from gameplay threads, exhaustion behavior, underrun recovery and device-unplug scenarios where feasible.
 - Benchmark render allocations and throughput; document known device limitations.
 
+### M4 — Common WAV sample rates
+
+- Detect the source sample rate automatically from the WAV format chunk; callers do not need to specify it.
+- Support common sample rates at or below 48 kHz, including 8, 11.025, 16, 22.05, 32, 44.1 and 48 kHz, for PCM16 mono and stereo WAV files.
+- Convert to the 48 kHz mix format when necessary without changing playback speed or pitch. Reject invalid or unsupported sample rates with a clear error; rates above 48 kHz are outside this milestone.
+- Add hardware-independent tests for each listed rate, covering detection, playback duration and pitch, mono/stereo ordering and looping boundaries. Preserve existing 48 kHz behavior.
+
 ## 9. Explicit risks and decisions to revisit
 
 - **Linux portability:** ALSA is a system library, not guaranteed everywhere. Avoid promising literally zero Linux prerequisites; consider PipeWire native support only if real user feedback warrants it.

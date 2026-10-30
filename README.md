@@ -23,12 +23,6 @@ dotnet test KlingKlang.slnx
 dotnet run --project samples/KlingKlang.Demo -- klingklang-demo.wav
 ```
 
-VS Code provides `Build library (Windows)`, `Build library (Linux)`, and
-`Build library (macOS)` Release tasks, plus the default `Build library (All)`
-task. They build the same platform-neutral AnyCPU library into the separate
-`src/KlingKlang/bin/Release/windows`, `linux`, and `macos` directories; these
-are not architecture-specific builds or live-playback tests.
-
 The sample generates a tone, mixes two overlapping voices offline, and writes a
 48 kHz stereo PCM16 WAV. Open the file in an external audio player to listen.
 It refuses to overwrite an existing output file; pass a different output path
