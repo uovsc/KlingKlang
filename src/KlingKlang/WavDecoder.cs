@@ -33,6 +33,7 @@ internal static class WavDecoder
 
         ulong remaining = riffSize - 4u;
         int channels = 0;
+        int sampleRate = 0;
         byte[]? data = null;
         Span<byte> chunkHeader = stackalloc byte[8];
         Span<byte> format = stackalloc byte[16];
@@ -60,7 +61,7 @@ internal static class WavDecoder
                 }
 
                 stream.ReadExactly(format);
-                channels = ValidateFormat(format);
+                (channels, sampleRate) = ValidateFormat(format);
                 SkipExactly(stream, size - 16u);
             }
             else if (chunkHeader[..4].SequenceEqual("data"u8))
@@ -97,16 +98,10 @@ internal static class WavDecoder
             throw new InvalidDataException("The WAV must contain a format and complete PCM frames.");
         }
 
-        var samples = new float[data.Length / 2];
-        for (int i = 0; i < samples.Length; i++)
-        {
-            samples[i] = BinaryPrimitives.ReadInt16LittleEndian(data.AsSpan(i * 2, 2)) / 32768f;
-        }
-
-        return new AudioClip(samples, channels);
+        return new AudioClip(Pcm16Resampler.Convert(data, channels, sampleRate), channels);
     }
 
-    private static int ValidateFormat(ReadOnlySpan<byte> format)
+    private static (int Channels, int SampleRate) ValidateFormat(ReadOnlySpan<byte> format)
     {
         ushort encoding = BinaryPrimitives.ReadUInt16LittleEndian(format);
         ushort channels = BinaryPrimitives.ReadUInt16LittleEndian(format[2..]);
@@ -120,9 +115,14 @@ internal static class WavDecoder
             throw new NotSupportedException("Only uncompressed PCM16 mono or stereo WAV files are supported.");
         }
 
-        if (sampleRate != 48_000)
+        if (sampleRate == 0)
         {
-            throw new NotSupportedException("Only 48 kHz WAV files are supported; resampling is not implemented.");
+            throw new InvalidDataException("The WAV sample rate must be nonzero.");
+        }
+
+        if (sampleRate < 8_000 || sampleRate > AudioClip.MixSampleRate)
+        {
+            throw new NotSupportedException("Only WAV sample rates from 8,000 through 48,000 Hz are supported.");
         }
 
         if (blockAlign != channels * 2 || byteRate != sampleRate * blockAlign)
@@ -130,7 +130,7 @@ internal static class WavDecoder
             throw new InvalidDataException("The WAV byte rate or block alignment is invalid.");
         }
 
-        return channels;
+        return (channels, (int)sampleRate);
     }
 
     private static void SkipExactly(Stream stream, uint count) => CopyExactly(stream, null, count);

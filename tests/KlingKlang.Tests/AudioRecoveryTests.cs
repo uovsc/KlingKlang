@@ -241,6 +241,30 @@ public sealed class AudioRecoveryTests
     }
 
     [TestMethod]
+    public void ConvertedVoiceResumesAtLastMixedPositionAfterDeviceLoss()
+    {
+        var oldStream = new ControlledStream();
+        var newStream = new ControlledStream();
+        int opens = 0;
+        using var engine = AudioEngine.CreateForTesting(new ThreadedAudioDevice(() =>
+            Interlocked.Increment(ref opens) == 1 ? oldStream : newStream));
+        using var clip = WaveTestData.Clip([0, 16384], sampleRate: 32_000);
+        VoiceHandle voice = engine.Play(clip, loop: true);
+        oldStream.Request(1);
+        Assert.IsTrue(oldStream.WaitForWrites(2));
+        CollectionAssert.AreEqual(new float[2], oldStream.GetWrite(1));
+        oldStream.LoseOnNextRead();
+        Assert.IsTrue(SpinWait.SpinUntil(() => Volatile.Read(ref opens) >= 2 &&
+            engine.ConnectionState == AudioConnectionState.Ready, TimeSpan.FromSeconds(3)));
+        Assert.IsTrue(engine.IsPlaying(voice));
+        newStream.Request(1);
+        Assert.IsTrue(newStream.WaitForWrites(2));
+        float[] resumed = newStream.GetWrite(1);
+        Assert.AreEqual(1f / 3f, resumed[0], 0.000001f);
+        Assert.AreEqual(resumed[0], resumed[1]);
+    }
+
+    [TestMethod]
     public void FailedReplacementStartupIsDisposedBeforeSecondAttempt()
     {
         var oldStream = new ControlledStream();

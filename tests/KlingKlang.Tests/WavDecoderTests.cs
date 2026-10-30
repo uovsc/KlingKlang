@@ -95,7 +95,38 @@ public sealed class WavDecoderTests
         AssertUnsupported(WaveTestData.Format(encoding: 3));
         AssertUnsupported(WaveTestData.Format(channels: 3));
         AssertUnsupported(WaveTestData.Format(bits: 24));
-        AssertUnsupported(WaveTestData.Format(sampleRate: 44_100));
+        AssertUnsupported(WaveTestData.Format(sampleRate: 7_999));
+        AssertUnsupported(WaveTestData.Format(sampleRate: 48_001));
+        AssertUnsupported(WaveTestData.Format(sampleRate: 96_000));
+        AssertInvalid(WaveTestData.Wave(WaveTestData.Format(sampleRate: 0), WaveTestData.Data(1)));
+        AssertInvalid(WaveTestData.Wave(WaveTestData.Format(sampleRate: 44_100, byteRate: 1), WaveTestData.Data(1)));
+        byte[] hugeRate = WaveTestData.Pcm([1]);
+        BinaryPrimitives.WriteUInt32LittleEndian(hugeRate.AsSpan(24, 4), uint.MaxValue);
+        AssertUnsupportedBytes(hugeRate);
+    }
+
+    [TestMethod]
+    public void DetectsSampleRateAfterDataOnNonSeekableStream()
+    {
+        byte[] wav = WaveTestData.Wave(("JUNK", [1]), WaveTestData.Data(0, 16384),
+            WaveTestData.Format(sampleRate: 32_000));
+        using var stream = new NonSeekableStream(wav);
+        using AudioClip clip = AudioClip.LoadWav(stream);
+        Assert.AreEqual(48_000, clip.SampleRate);
+        Assert.AreEqual(3, clip.FrameCount);
+        Assert.IsTrue(stream.CanRead);
+    }
+
+    [TestMethod]
+    public void AcceptsEveryIntegerRateAtAndBetweenBoundaries()
+    {
+        for (int rate = 8_000; rate <= 48_000; rate++)
+        {
+            using AudioClip clip = WaveTestData.Clip([100, 200, 300], sampleRate: rate);
+            int expected = (int)(((long)3 * 48_000 + rate / 2) / rate);
+            Assert.AreEqual(expected, clip.FrameCount, $"Input rate {rate}");
+            Assert.AreEqual(48_000, clip.SampleRate, $"Input rate {rate}");
+        }
     }
 
     [TestMethod]
@@ -118,6 +149,9 @@ public sealed class WavDecoderTests
     private static void AssertUnsupported((string Id, byte[] Payload) format) =>
         Assert.ThrowsExactly<NotSupportedException>(() =>
             AudioClip.LoadWav(new MemoryStream(WaveTestData.Wave(format, WaveTestData.Data(1)))));
+
+    private static void AssertUnsupportedBytes(byte[] bytes) =>
+        Assert.ThrowsExactly<NotSupportedException>(() => AudioClip.LoadWav(new MemoryStream(bytes)));
 
     private sealed class NonSeekableStream(byte[] bytes) : Stream
     {

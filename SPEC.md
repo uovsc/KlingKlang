@@ -62,7 +62,7 @@ Public API constraints:
 
 - Standard mix format: interleaved stereo, float32, nominal 48 kHz.
 - Backend must negotiate actual device format and convert as needed. Do not assume every device supports the nominal format.
-- Initial decoder accepts source sample rates of 48 kHz only **or** provides a tested conversion path before accepting other sample rates. Never reinterpret samples at the wrong playback speed. Preferred MVP: reject mismatched sample rates with a clear error until simple resampling is implemented.
+- The decoder detects WAV source rates and converts supported inputs to 48 kHz before mixing. Never reinterpret samples at the wrong playback speed; reject unsupported rates with a clear error.
 - One active voice has clip reference, frame cursor, gain, loop flag and generation ID.
 - The mixer sums active voices into an output buffer that is zeroed once per render block. Mono inputs are duplicated to both output channels.
 - No allocations or lock contention inside normal render blocks after warmup. Game commands cross a bounded queue and are applied at safe block boundaries.
@@ -126,14 +126,15 @@ The backend must report negotiated sample rate/channel format, provide a steady 
 ### M4 — Common WAV sample rates
 
 - Detect the source sample rate automatically from the WAV format chunk; callers do not need to specify it.
-- Support common sample rates at or below 48 kHz, including 8, 11.025, 16, 22.05, 32, 44.1 and 48 kHz, for PCM16 mono and stereo WAV files.
-- Convert to the 48 kHz mix format when necessary without changing playback speed or pitch. Reject invalid or unsupported sample rates with a clear error; rates above 48 kHz are outside this milestone.
+- Support every whole-number rate from 8 to 48 kHz inclusive, including 8, 11.025, 16, 22.05, 32, 44.1 and 48 kHz, for PCM16 mono and stereo WAV files.
+- Convert once at load time to the 48 kHz mix format using linear interpolation, preserving playback speed and pitch within frame rounding. Round output duration to the nearest frame, with half-frame ties rounded up; interpolate from the final source sample toward the first for both one-shot and looping clips.
+- Reject invalid or unsupported sample rates and output sizes with a clear error; rates below 8 kHz or above 48 kHz are outside this milestone.
 - Add hardware-independent tests for each listed rate, covering detection, playback duration and pitch, mono/stereo ordering and looping boundaries. Preserve existing 48 kHz behavior.
 
 ## 9. Explicit risks and decisions to revisit
 
 - **Linux portability:** ALSA is a system library, not guaranteed everywhere. Avoid promising literally zero Linux prerequisites; consider PipeWire native support only if real user feedback warrants it.
-- **Sample rates:** Starting with 48 kHz-only clips is simpler but restrictive. Implement measured, tested resampling before advertising arbitrary-rate WAV support.
+- **Sample rates:** Load-time linear interpolation supports integer WAV rates from 8 to 48 kHz; other rates remain unsupported. It increases clip memory and can attenuate high frequencies, so revisit quality and memory costs if needed.
 - **Device format:** `float32` is an internal format; WASAPI/ALSA/macOS backends must negotiate and/or convert correctly.
 - **Platform testing:** Code generation and cross-compilation are not equivalent to playback verification on real systems.
 - **AI-generated implementation:** Every interop signature, buffer lifetime, callback convention and failure path must be checked against primary OS documentation and tested. Generated code is a draft until verified.

@@ -64,6 +64,6 @@ internal static class WaveTestData
         return buffer.ToArray();
     }
 
-    public static AudioClip Clip(short[] samples, short channels = 1) =>
-        AudioClip.LoadWav(new MemoryStream(Pcm(samples, channels)));
+    public static AudioClip Clip(short[] samples, short channels = 1, int sampleRate = 48_000) =>
+        AudioClip.LoadWav(new MemoryStream(Pcm(samples, channels, sampleRate)));
 }

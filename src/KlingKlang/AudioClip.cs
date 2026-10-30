@@ -2,6 +2,7 @@ namespace KlingKlang;
 
 public sealed class AudioClip : IDisposable
 {
+    internal const int MixSampleRate = 48_000;
     private float[]? _samples;
 
     internal AudioClip(float[] samples, int channels)
@@ -12,7 +13,7 @@ public sealed class AudioClip : IDisposable
     }
 
     public int Channels { get; }
-    public int SampleRate => 48_000;
+    public int SampleRate => MixSampleRate;
     public int FrameCount { get; }
 
     public static AudioClip LoadWav(string path)

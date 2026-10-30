@@ -3,7 +3,7 @@ using KlingKlang;
 
 if (args.Length != 1)
 {
-    Console.Error.WriteLine("Usage: KlingKlang.LiveDemo <48-kHz-PCM16-WAV>");
+    Console.Error.WriteLine("Usage: KlingKlang.LiveDemo <8-48-kHz-PCM16-WAV>");
     return 2;
 }
 

@@ -5,12 +5,13 @@ and experimental live backends selected by `AudioEngine.Create()`.
 
 | Platform | Backend | Verification status |
 | --- | --- | --- |
-| Windows | WASAPI shared mode | Simulated tests only; real Windows playback has not been tested. |
+| Windows | WASAPI shared mode | User-confirmed Release DLL playback on Windows 11 Home under KVM on a Fedora 44 host: two WAV files were heard simultaneously. Guest architecture and virtual audio route were not reported; recovery was not tested. |
 | Linux | System ALSA `libasound.so.2` | Fedora 44 x86-64, kernel `7.2.11-200.fc44`, alsa-lib 1.2.16.1, ALSA `default` through PipeWire/pipewire-alsa 1.6.9 to the ALC1220 analog output: three open/play/close cycles and an active output link observed. Audible output was not independently confirmed. |
 | macOS | System Audio Queue Services | Simulated tests only; real macOS playback has not been tested. |
 
-These are not claims of support for other configurations. A real-device smoke
-test on Windows and macOS and audible confirmation on Linux are still needed.
+These are not claims of support for other configurations. Testing on physical
+Windows hardware, a real-device smoke test on macOS, and audible confirmation
+on Linux are still needed.
 
 ## Build, test, and listen
 
@@ -31,7 +32,7 @@ or remove the old file yourself.
 On Windows, Linux, or macOS, the live sample loads a WAV and plays it through the default playback device:
 
 ```sh
-dotnet run --project samples/KlingKlang.LiveDemo -- path/to/48khz-pcm16.wav
+dotnet run --project samples/KlingKlang.LiveDemo -- path/to/pcm16.wav
 ```
 
 Begin with a quiet WAV and a safe system volume. Automated tests use simulated
@@ -53,10 +54,19 @@ For offline rendering instead, use `AudioEngine.CreateOffline()` and call
 `Render` with a float buffer containing complete interleaved stereo frames.
 `Render` is not available on a live engine.
 
-- WAV input must be uncompressed little-endian PCM16, mono or stereo, at
-  48 kHz. Other input sample rates and formats are rejected; WAV loading does
-  not resample. The decoder accepts unknown RIFF chunks and leaves input
-  streams open.
+- WAV input must be uncompressed little-endian PCM16, mono or stereo, at any
+  whole-number rate from 8,000 to 48,000 Hz inclusive. The decoder reads the
+  source rate automatically, accepts unknown RIFF chunks, and leaves input
+  streams open. Unsupported rates and formats are rejected.
+- Clips are converted once at load time to 48 kHz using linear interpolation.
+  `AudioClip.SampleRate` and `FrameCount` describe these stored samples, not
+  the original WAV. Conversion can expand sample memory by up to six times
+  and attenuates some high frequencies. At the end of a converted clip,
+  interpolation wraps toward the first source sample even for one-shot
+  playback; this does not guarantee click-free loops. The converted duration
+  is rounded to the nearest output frame, so each loop can differ from the
+  original duration by up to half a 48 kHz frame. Existing 48 kHz samples are
+  unchanged.
 - Offline rendering is synchronous and advances voices by the requested number
   of frames. Samples are summed as floats without clipping; clamp when
   converting to an output format, as in the sample. Empty output does not
@@ -118,7 +128,8 @@ device. No latency or underrun behavior has been measured on Windows.
 
 An invalidated endpoint or stream resource, or a missing default endpoint, is
 classified for reconnection. Other WASAPI failures are reported without retries.
-Windows playback and physical device-loss recovery remain untested.
+Playback was confirmed in the Windows 11 Home KVM guest described above;
+physical Windows hardware and device-loss recovery remain untested.
 
 ## Linux backend limitations
 
