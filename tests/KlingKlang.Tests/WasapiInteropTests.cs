@@ -36,6 +36,21 @@ public sealed class WasapiInteropTests
             GetNested("IAudioRenderClient").GetMethods().OrderBy(method => method.MetadataToken).Select(method => method.Name).ToArray());
     }
 
+    [TestMethod]
+    public void ClassifiesInvalidatedAndMissingEndpointsButNotUnrelatedErrors()
+    {
+        Type type = typeof(AudioEngine).Assembly.GetType("KlingKlang.WasapiOutputStream", throwOnError: true)!;
+        MethodInfo createError = type.GetMethod("CreateError", BindingFlags.Static | BindingFlags.NonPublic)!;
+        object invalidated = createError.Invoke(null, [unchecked((int)0x88890004), "test"])!;
+        object resources = createError.Invoke(null, [unchecked((int)0x88890026), "test"])!;
+        object missing = createError.Invoke(null, [unchecked((int)0x80070490), "test"])!;
+        object unrelated = createError.Invoke(null, [unchecked((int)0x80070057), "test"])!;
+        Assert.IsInstanceOfType<AudioDeviceLostException>(invalidated);
+        Assert.IsInstanceOfType<AudioDeviceLostException>(resources);
+        Assert.IsInstanceOfType<AudioDeviceLostException>(missing);
+        Assert.AreEqual(typeof(InvalidOperationException), unrelated.GetType());
+    }
+
     private static Type GetNested(string name) =>
         typeof(AudioEngine).Assembly.GetType("KlingKlang.WasapiOutputStream", throwOnError: true)!
             .GetNestedType(name, BindingFlags.NonPublic)!;

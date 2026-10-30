@@ -76,7 +76,7 @@ public sealed class AlsaOutputStreamTests
     public void PropagatesDeviceErrorsAndClosesAfterInitializationFailure()
     {
         var initApi = new FakeAlsa { SetParametersResult = -19 };
-        InvalidOperationException startup = Assert.ThrowsExactly<InvalidOperationException>(() => new AlsaOutputStream(initApi));
+        AudioDeviceLostException startup = Assert.ThrowsExactly<AudioDeviceLostException>(() => new AlsaOutputStream(initApi));
         StringAssert.Contains(startup.Message, "ALSA -19");
         Assert.AreEqual(1, initApi.Closes);
         Assert.AreEqual(0, initApi.Drops);
@@ -84,9 +84,22 @@ public sealed class AlsaOutputStreamTests
         var api = new FakeAlsa();
         api.Availability.Enqueue(-19);
         var stream = new AlsaOutputStream(api);
-        InvalidOperationException error = Assert.ThrowsExactly<InvalidOperationException>(() => stream.GetAvailableFrames());
+        AudioDeviceLostException error = Assert.ThrowsExactly<AudioDeviceLostException>(() => stream.GetAvailableFrames());
         StringAssert.Contains(error.Message, "ALSA -19");
         stream.Dispose();
+        stream.Dispose();
+        Assert.AreEqual(1, api.Drops);
+        Assert.AreEqual(1, api.Closes);
+    }
+
+    [TestMethod]
+    public void ClassifiesPhysicalRemovalAndReleasesAnInvalidatedDevice()
+    {
+        var api = new FakeAlsa { DropResult = -19, CloseResult = -19 };
+        api.Writes.Enqueue(-25);
+        var stream = new AlsaOutputStream(api);
+        AudioDeviceLostException loss = Assert.ThrowsExactly<AudioDeviceLostException>(() => stream.Write([.5f, -.5f], 1));
+        StringAssert.Contains(loss.Message, "ALSA -25");
         stream.Dispose();
         Assert.AreEqual(1, api.Drops);
         Assert.AreEqual(1, api.Closes);

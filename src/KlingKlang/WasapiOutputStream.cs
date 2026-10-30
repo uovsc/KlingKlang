@@ -10,6 +10,9 @@ internal sealed class WasapiOutputStream : IAudioOutputStream
     private const uint AutoConvertPcm = 0x80000000;
     private const uint DefaultQualityResampling = 0x08000000;
     private const long BufferDurationHundredNanoseconds = 500_000;
+    private const int DeviceInvalidated = unchecked((int)0x88890004);
+    private const int ResourcesInvalidated = unchecked((int)0x88890026);
+    private const int EndpointNotFound = unchecked((int)0x80070490);
 
     private IMMDeviceEnumerator? _enumerator;
     private IMMDevice? _device;
@@ -17,6 +20,7 @@ internal sealed class WasapiOutputStream : IAudioOutputStream
     private IAudioRenderClient? _renderClient;
     private bool _comInitialized;
     private bool _started;
+    private bool _deviceLost;
     private bool _disposed;
 
     public WasapiOutputStream()
@@ -70,7 +74,7 @@ internal sealed class WasapiOutputStream : IAudioOutputStream
 
     public int GetAvailableFrames()
     {
-        Check(_client!.GetCurrentPadding(out uint padding), "Querying WASAPI buffer padding");
+        CheckStream(_client!.GetCurrentPadding(out uint padding), "Querying WASAPI buffer padding");
         if (padding > BufferFrames)
         {
             throw new InvalidOperationException("WASAPI returned padding larger than its buffer.");
@@ -81,7 +85,7 @@ internal sealed class WasapiOutputStream : IAudioOutputStream
 
     public void Write(float[] samples, int frames)
     {
-        Check(_renderClient!.GetBuffer((uint)frames, out IntPtr destination), "Acquiring a WASAPI buffer");
+        CheckStream(_renderClient!.GetBuffer((uint)frames, out IntPtr destination), "Acquiring a WASAPI buffer");
         try
         {
             Marshal.Copy(samples, 0, destination, checked(frames * 2));
@@ -98,7 +102,7 @@ internal sealed class WasapiOutputStream : IAudioOutputStream
             throw;
         }
 
-        Check(_renderClient.ReleaseBuffer((uint)frames, 0), "Releasing the WASAPI buffer");
+        CheckStream(_renderClient.ReleaseBuffer((uint)frames, 0), "Releasing the WASAPI buffer");
     }
 
     public void Start()
@@ -117,7 +121,7 @@ internal sealed class WasapiOutputStream : IAudioOutputStream
         _disposed = true;
         try
         {
-            if (_started)
+            if (_started && !_deviceLost)
             {
                 Check(_client!.Stop(), "Stopping the WASAPI stream");
             }
@@ -177,8 +181,24 @@ internal sealed class WasapiOutputStream : IAudioOutputStream
         }
     }
 
-    private static InvalidOperationException CreateError(int result, string operation) =>
-        new($"{operation} failed (HRESULT 0x{unchecked((uint)result):X8}).", Marshal.GetExceptionForHR(result));
+    private void CheckStream(int result, string operation)
+    {
+        if (result is DeviceInvalidated or ResourcesInvalidated)
+        {
+            _deviceLost = true;
+        }
+
+        Check(result, operation);
+    }
+
+    internal static InvalidOperationException CreateError(int result, string operation)
+    {
+        string message = $"{operation} failed (HRESULT 0x{unchecked((uint)result):X8}).";
+        Exception? cause = Marshal.GetExceptionForHR(result);
+        return result is DeviceInvalidated or ResourcesInvalidated or EndpointNotFound
+            ? new AudioDeviceLostException(message, cause)
+            : new InvalidOperationException(message, cause);
+    }
 
     [DllImport("ole32.dll", ExactSpelling = true)]
     private static extern int CoInitializeEx(IntPtr reserved, uint coInit);

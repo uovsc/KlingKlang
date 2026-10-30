@@ -12,6 +12,7 @@ internal sealed class AudioQueueOutputStream : IAudioOutputStream
     private const int Channels = 2;
     private const int BytesPerSample = sizeof(float);
     private const int BufferBytes = FramesPerBuffer * Channels * BytesPerSample;
+    private const int InvalidDevice = -66680;
     private static readonly int DataSizeOffset = Marshal.OffsetOf<AudioQueueBuffer>(nameof(AudioQueueBuffer.AudioDataByteSize)).ToInt32();
     private static readonly AudioQueueOutputCallback Callback = OnBufferComplete;
     private static int s_callbackFailures;
@@ -27,6 +28,7 @@ internal sealed class AudioQueueOutputStream : IAudioOutputStream
     private long _lastCallbackTimestamp;
     private int _callbackError;
     private bool _started;
+    private bool _deviceLost;
     private bool _disposed;
 
     [SupportedOSPlatform("macos")]
@@ -142,7 +144,7 @@ internal sealed class AudioQueueOutputStream : IAudioOutputStream
             {
                 Marshal.Copy(samples, sampleOffset, _data[i], FramesPerBuffer * Channels);
                 Marshal.WriteInt32(_buffers[i], DataSizeOffset, BufferBytes);
-                Check(_api.Enqueue(_queue, _buffers[i]), "Enqueuing an Audio Queue buffer");
+                CheckStream(_api.Enqueue(_queue, _buffers[i]), "Enqueuing an Audio Queue buffer");
             }
             catch
             {
@@ -183,7 +185,7 @@ internal sealed class AudioQueueOutputStream : IAudioOutputStream
             {
                 try
                 {
-                    if (_started)
+                    if (_started && !_deviceLost)
                     {
                         stopResult = _api.Stop(_queue);
                     }
@@ -262,6 +264,19 @@ internal sealed class AudioQueueOutputStream : IAudioOutputStream
         }
     }
 
-    private static InvalidOperationException CreateError(int result, string operation) =>
-        new($"{operation} failed (OSStatus {result.ToString(CultureInfo.InvariantCulture)}).");
+    private void CheckStream(int result, string operation)
+    {
+        if (result == InvalidDevice)
+        {
+            _deviceLost = true;
+        }
+
+        Check(result, operation);
+    }
+
+    private static InvalidOperationException CreateError(int result, string operation)
+    {
+        string message = $"{operation} failed (OSStatus {result.ToString(CultureInfo.InvariantCulture)}).";
+        return result == InvalidDevice ? new AudioDeviceLostException(message) : new InvalidOperationException(message);
+    }
 }

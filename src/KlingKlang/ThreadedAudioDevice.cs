@@ -1,15 +1,29 @@
 namespace KlingKlang;
 
-internal sealed class ThreadedAudioDevice(Func<IAudioOutputStream> openStream) : IAudioDevice
+internal sealed class ThreadedAudioDevice : IAudioDevice
 {
+    private const int ReconnectAttempts = 2;
+    private const int RetryDelayMilliseconds = 500;
+    private readonly Func<IAudioOutputStream> _openStream;
+    private readonly Func<ManualResetEventSlim, int, bool> _retryWait;
     private readonly ManualResetEventSlim _ready = new();
     private readonly ManualResetEventSlim _stop = new();
     private AudioRenderCallback? _render;
     private Thread? _thread;
-    private Exception? _failure;
+    private Exception? _startupFailure;
+    private AudioDeviceStatus _status = AudioDeviceStatus.Ready;
     private bool _disposed;
 
-    public Exception? Failure => Volatile.Read(ref _failure);
+    public ThreadedAudioDevice(
+        Func<IAudioOutputStream> openStream,
+        Func<ManualResetEventSlim, int, bool>? retryWait = null)
+    {
+        _openStream = openStream;
+        _retryWait = retryWait ?? WaitForStop;
+    }
+
+    public AudioDeviceStatus Status => Volatile.Read(ref _status);
+    internal Exception? Failure => Status.Failure;
 
     public void Start(AudioRenderCallback render)
     {
@@ -33,7 +47,7 @@ internal sealed class ThreadedAudioDevice(Func<IAudioOutputStream> openStream) :
         }
 
         _ready.Wait();
-        if (Failure is Exception failure)
+        if (Volatile.Read(ref _startupFailure) is Exception failure)
         {
             _thread.Join();
             throw new InvalidOperationException("Audio device initialization failed.", failure);
@@ -66,26 +80,43 @@ internal sealed class ThreadedAudioDevice(Func<IAudioOutputStream> openStream) :
     private void Run()
     {
         IAudioOutputStream? stream = null;
+        bool startupSucceeded = false;
         try
         {
-            stream = openStream();
-            if (stream.BufferFrames <= 0 || stream.BufferFrames > Array.MaxLength / 2)
-            {
-                throw new InvalidOperationException("The audio device returned an invalid buffer size.");
-            }
-
-            var buffer = new float[stream.BufferFrames * 2];
-            RenderAvailable(stream, buffer);
-            stream.Start();
+            stream = OpenStartedStream(renderInitialAudio: true, out float[] buffer);
+            startupSucceeded = true;
             _ready.Set();
             while (!_stop.Wait(10))
             {
-                RenderAvailable(stream, buffer);
+                try
+                {
+                    RenderAvailable(stream, buffer, renderAudio: true);
+                }
+                catch (AudioDeviceLostException loss)
+                {
+                    Publish(AudioConnectionState.Recovering, loss);
+                    IAudioOutputStream lostStream = stream;
+                    stream = null;
+                    try
+                    {
+                        lostStream.Dispose();
+                    }
+                    catch (Exception cleanupFailure)
+                    {
+                        throw new AggregateException("The lost audio device could not be released.", loss, cleanupFailure);
+                    }
+
+                    stream = Reconnect(loss, out buffer);
+                    if (stream is null)
+                    {
+                        break;
+                    }
+                }
             }
         }
         catch (Exception exception)
         {
-            RecordFailure(exception);
+            Publish(AudioConnectionState.Faulted, exception);
         }
         finally
         {
@@ -95,14 +126,84 @@ internal sealed class ThreadedAudioDevice(Func<IAudioOutputStream> openStream) :
             }
             catch (Exception exception)
             {
-                RecordFailure(exception);
+                Exception? previous = Status.Failure;
+                Publish(AudioConnectionState.Faulted,
+                    previous is null ? exception : new AggregateException(previous, exception));
+            }
+
+            if (!startupSucceeded)
+            {
+                Volatile.Write(ref _startupFailure, Status.Failure);
             }
 
             _ready.Set();
         }
     }
 
-    private void RenderAvailable(IAudioOutputStream stream, float[] buffer)
+    private IAudioOutputStream? Reconnect(AudioDeviceLostException loss, out float[] buffer)
+    {
+        var failures = new List<Exception> { loss };
+        buffer = [];
+        for (int attempt = 0; attempt < ReconnectAttempts; attempt++)
+        {
+            if (_stop.IsSet || (attempt > 0 && _retryWait(_stop, RetryDelayMilliseconds)))
+            {
+                return null;
+            }
+
+            try
+            {
+                IAudioOutputStream stream = OpenStartedStream(renderInitialAudio: false, out buffer);
+                Publish(AudioConnectionState.Ready, null);
+                return stream;
+            }
+            catch (AudioDeviceLostException exception)
+            {
+                failures.Add(exception);
+                Publish(AudioConnectionState.Recovering,
+                    new AggregateException($"Audio reconnection attempt {attempt + 1} failed.", failures));
+            }
+            catch (Exception exception)
+            {
+                failures.Add(exception);
+                throw new AggregateException("Audio reconnection encountered a non-recoverable error.", failures);
+            }
+        }
+
+        throw new AggregateException("Audio reconnection failed after two attempts.", failures);
+    }
+
+    private IAudioOutputStream OpenStartedStream(bool renderInitialAudio, out float[] buffer)
+    {
+        IAudioOutputStream stream = _openStream();
+        try
+        {
+            if (stream.BufferFrames <= 0 || stream.BufferFrames > Array.MaxLength / 2)
+            {
+                throw new InvalidOperationException("The audio device returned an invalid buffer size.");
+            }
+
+            buffer = new float[stream.BufferFrames * 2];
+            RenderAvailable(stream, buffer, renderInitialAudio);
+            stream.Start();
+            return stream;
+        }
+        catch (Exception initializationFailure)
+        {
+            try
+            {
+                stream.Dispose();
+            }
+            catch (Exception cleanupFailure)
+            {
+                throw new AggregateException("Audio stream startup and cleanup both failed.", initializationFailure, cleanupFailure);
+            }
+
+            throw;
+        }
+    }
+
+    private void RenderAvailable(IAudioOutputStream stream, float[] buffer, bool renderAudio)
     {
         int frames = stream.GetAvailableFrames();
         if (frames < 0 || frames > stream.BufferFrames)
@@ -116,18 +217,24 @@ internal sealed class ThreadedAudioDevice(Func<IAudioOutputStream> openStream) :
         }
 
         Span<float> samples = buffer.AsSpan(0, frames * 2);
-        _render!(samples);
-        for (int i = 0; i < samples.Length; i++)
+        if (renderAudio)
         {
-            samples[i] = Math.Clamp(samples[i], -1f, 1f);
+            _render!(samples);
+            for (int i = 0; i < samples.Length; i++)
+            {
+                samples[i] = Math.Clamp(samples[i], -1f, 1f);
+            }
+        }
+        else
+        {
+            samples.Clear();
         }
 
         stream.Write(buffer, frames);
     }
 
-    private void RecordFailure(Exception exception)
-    {
-        Exception? previous = _failure;
-        Volatile.Write(ref _failure, previous is null ? exception : new AggregateException(previous, exception));
-    }
+    private void Publish(AudioConnectionState state, Exception? failure) =>
+        Volatile.Write(ref _status, new AudioDeviceStatus(state, failure));
+
+    private static bool WaitForStop(ManualResetEventSlim stop, int milliseconds) => stop.Wait(milliseconds);
 }

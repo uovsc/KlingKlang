@@ -67,6 +67,9 @@ public sealed class AudioEngine : IDisposable
 
     public static AudioEngine CreateOffline(int maxVoices = 64) => new(maxVoices, new NullAudioDevice());
 
+    public AudioConnectionState ConnectionState =>
+        Volatile.Read(ref _disposed) ? AudioConnectionState.Disposed : _device.Status.State;
+
     internal static AudioEngine CreateForTesting(IAudioDevice device, int maxVoices = 64, int commandCapacity = DefaultCommandCapacity) =>
         new(maxVoices, device, commandCapacity);
 
@@ -207,22 +210,22 @@ public sealed class AudioEngine : IDisposable
             }
 
             Volatile.Write(ref _disposed, true);
-        }
 
-        try
-        {
-            _device.Dispose();
-        }
-        finally
-        {
-            Array.Clear(_voices);
-            Array.Clear(_commands);
-            Array.Clear(_activeGenerations);
-        }
+            try
+            {
+                _device.Dispose();
+            }
+            finally
+            {
+                Array.Clear(_voices);
+                Array.Clear(_commands);
+                Array.Clear(_activeGenerations);
+            }
 
-        if (_device.Failure is Exception failure)
-        {
-            throw new InvalidOperationException("The audio device failed during playback or shutdown.", failure);
+            if (_device.Status.Failure is Exception failure)
+            {
+                throw new InvalidOperationException("The audio device failed during playback or shutdown.", failure);
+            }
         }
     }
 
@@ -349,9 +352,14 @@ public sealed class AudioEngine : IDisposable
     private void ThrowIfUnavailable()
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed), this);
-        if (_device.Failure is Exception failure)
+        AudioDeviceStatus status = _device.Status;
+        if (status.State != AudioConnectionState.Ready)
         {
-            throw new InvalidOperationException("The audio device failed during playback.", failure);
+            throw new InvalidOperationException(
+                status.State == AudioConnectionState.Recovering
+                    ? "The audio device is reconnecting."
+                    : "The audio device failed during playback.",
+                status.Failure);
         }
     }
 

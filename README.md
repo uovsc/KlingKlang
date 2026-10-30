@@ -28,9 +28,7 @@ The sample generates a tone, mixes two overlapping voices offline, and writes a
 It refuses to overwrite an existing output file; pass a different output path
 or remove the old file yourself.
 
-On Windows, Linux, or macOS, the live sample opens and closes the default
-playback device three times. Each time it loops a WAV, reduces its volume, and
-stops it:
+On Windows, Linux, or macOS, the live sample loads a WAV and plays it through the default playback device:
 
 ```sh
 dotnet run --project samples/KlingKlang.LiveDemo -- path/to/48khz-pcm16.wav
@@ -73,14 +71,41 @@ For offline rendering instead, use `AudioEngine.CreateOffline()` and call
   throw `ObjectDisposedException`.
 - Playback commands are queued and processed at the next render block. The
   bounded queue holds 1024 commands; a full queue causes the operation to
-  throw `InvalidOperationException` without applying it. Producers may call
-  playback methods concurrently, but must not call offline `Render`
-  concurrently with another `Render` or with disposal.
+  throw `InvalidOperationException` without applying it. Concurrent producers
+  use a short lock; the audio thread never waits for it. Do not call offline
+  `Render` concurrently with another `Render` or with disposal.
 - Live playback is asynchronous. A stopped or completed voice can still have
   samples already queued in the device buffer. `IsPlaying` reports whether a
   voice is still being mixed, not whether its last sample has reached the
-  speakers. Startup errors are reported by `Create`; subsequent device errors
-  are reported by the next engine operation or disposal.
+  speakers. Disposing immediately after completion may cut off buffered audio.
+
+## Device loss and recovery
+
+`audio.ConnectionState` reports `Ready`, `Recovering`, `Faulted`, or `Disposed`
+without throwing. An offline engine remains `Ready` until it is disposed.
+Initial device failures are reported by `Create`.
+
+After a recognized loss of an established live device, the engine releases the
+old stream and tries the default output twice: once immediately, then once
+more after 500 ms. The delay is interruptible by disposal. If both attempts
+fail, or cleanup or another non-recoverable error occurs, the engine becomes
+`Faulted`; dispose and recreate it after resolving the error. A later loss
+after a successful reconnect gets a fresh retry budget. Opening and closing
+native devices may themselves block beyond the retry delay.
+
+While `Recovering` or `Faulted`, playback operations (including `IsPlaying`)
+throw `InvalidOperationException` with the underlying error as an inner
+exception. Calls accepted just before the state changes remain queued; rejected
+calls do not apply their commands. Active voices retain their handles and
+resume at their last **mixed** positions after reconnection. Samples already
+queued to the old output, or partially written when it failed, may be lost or
+partly audible. Disposal is always allowed, but may also report an outstanding
+device failure; its connection state is then `Disposed`.
+
+Recovery is triggered only for recognized device-loss errors, not for arbitrary
+errors. In particular, a backend watchdog timeout is reported as a failure
+instead of being assumed to be a device loss. Actual unplug and reconnect
+behavior has not yet been verified on physical devices.
 
 ## Windows backend limitations
 
@@ -91,9 +116,9 @@ when the shared mix format differs. It requests a 50 ms buffer and polls at
 10 ms intervals; actual buffering and latency depend on Windows and the
 device. No latency or underrun behavior has been measured on Windows.
 
-Device loss or a stream failure stops playback and is surfaced as an exception;
-automatic device switching and recovery are not implemented. Dispose the
-engine and create a new one after resolving the underlying problem.
+An invalidated endpoint or stream resource, or a missing default endpoint, is
+classified for reconnection. Other WASAPI failures are reported without retries.
+Windows playback and physical device-loss recovery remain untested.
 
 ## Linux backend limitations
 
@@ -110,6 +135,8 @@ again, and suspended streams are resumed or prepared. A device that stops
 accepting frames for two seconds reports an error, except while awaiting
 recovery from a suspended stream. Actual buffering, latency, recovery, and
 audibility depend on the device and system configuration.
+ALSA device-removal errors `ENODEV` and `ENOTTY` trigger reconnection;
+underrun and suspension continue to be handled in place where possible.
 
 ## macOS backend limitations
 
@@ -120,7 +147,31 @@ stops returning buffers for two seconds, the engine reports an error.
 Actual playback, format conversion, latency, device changes, and shutdown have
 not yet been verified on macOS. If native queue disposal fails, the error is
 reported and the callback context is retained to avoid a possible
-use-after-free.
+use-after-free. An Audio Queue invalid-device error triggers reconnection; a
+stalled callback instead faults the engine because its cause is unknown.
 
-Across all backends, automatic device switching or reconnection is not
-implemented. Dispose the engine and recreate it after resolving device errors.
+## Render benchmark
+
+Run the dependency-free, hardware-independent benchmark in Release mode:
+
+```sh
+dotnet run --project benchmarks/KlingKlang.Benchmarks -c Release
+```
+
+It reports warmed render-thread allocations, frames per second, and the ratio
+to 48 kHz for mono and stereo clips, 0/1/16/64 voices, and 480/960-frame
+blocks. Timing varies by machine and is not a CI pass/fail threshold; a
+64-voice scenario below real time is marked `BELOW_REALTIME`. Any observed
+allocation is marked `ALLOCATED`.
+
+One Release run on Fedora 44 x86-64, .NET 10.0.13, AMD Ryzen 9 9950X3D,
+measured zero render-thread bytes in every scenario. The 64-voice stereo
+scenarios achieved approximately 15.5–16.8 million frames/s (323–351 times
+real time). These measurements are not live-device latency or a guarantee for
+other machines.
+
+For manual device-loss testing, use a quiet 48 kHz PCM16 WAV, run the live
+sample, then disconnect and reconnect an output device while playback is
+active. Observe `ConnectionState` in a debugger or a small test app and record
+the OS version, architecture, audio route, reconnect result, and audible
+behavior. Do not treat simulated tests as physical-device verification.

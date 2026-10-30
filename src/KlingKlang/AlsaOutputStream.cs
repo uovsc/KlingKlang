@@ -10,6 +10,8 @@ internal sealed class AlsaOutputStream : IAudioOutputStream
 {
     private const int Interrupted = -4;
     private const int TryAgain = -11;
+    private const int NoDevice = -19;
+    private const int InvalidDevice = -25;
     private const int Underrun = -32;
     private const int Suspended = -86;
     private const int BytesPerFrame = 4;
@@ -23,6 +25,7 @@ internal sealed class AlsaOutputStream : IAudioOutputStream
     private int _pendingFrames;
     private bool _configured;
     private bool _suspended;
+    private bool _deviceLost;
     private bool _started;
     private bool _disposed;
     private long _lastProgressTimestamp;
@@ -42,10 +45,16 @@ internal sealed class AlsaOutputStream : IAudioOutputStream
         _timeoutTicks = Math.Max(1, (long)(timeout.TotalSeconds * Stopwatch.Frequency));
         try
         {
-            Check(_api.Open(out _handle), "Opening the default ALSA playback device");
-            Check(_api.SetParameters(_handle), "Configuring ALSA for 48 kHz stereo PCM16");
+            int openResult = _api.Open(out _handle);
+            if (openResult is -2 or -6 or -16 or NoDevice or InvalidDevice)
+            {
+                throw CreateDeviceLostError(openResult, "Opening the default ALSA playback device");
+            }
+
+            Check(openResult, "Opening the default ALSA playback device");
+            CheckStream(_api.SetParameters(_handle), "Configuring ALSA for 48 kHz stereo PCM16");
             _configured = true;
-            Check(_api.GetParameters(_handle, out nuint frames, out _), "Querying ALSA buffer size");
+            CheckStream(_api.GetParameters(_handle, out nuint frames, out _), "Querying ALSA buffer size");
             if (frames == 0 || frames > (nuint)(Array.MaxLength / BytesPerFrame))
             {
                 throw new InvalidOperationException("ALSA returned an invalid buffer size.");
@@ -160,6 +169,12 @@ internal sealed class AlsaOutputStream : IAudioOutputStream
             }
         }
 
+        if (_deviceLost)
+        {
+            if (dropResult is NoDevice or InvalidDevice) { dropResult = 0; }
+            if (closeResult is NoDevice or InvalidDevice) { closeResult = 0; }
+        }
+
         if (dropResult < 0 && closeResult < 0)
         {
             throw new AggregateException(CreateError(dropResult, "Stopping ALSA"), CreateError(closeResult, "Closing ALSA"));
@@ -200,12 +215,16 @@ internal sealed class AlsaOutputStream : IAudioOutputStream
             case TryAgain:
                 return;
             case Underrun:
-                Check(_api.Prepare(_handle), "Recovering from an ALSA underrun");
+                CheckStream(_api.Prepare(_handle), "Recovering from an ALSA underrun");
                 return;
             case Suspended:
                 _suspended = true;
                 Resume();
                 return;
+            case NoDevice:
+            case InvalidDevice:
+                _deviceLost = true;
+                throw CreateDeviceLostError(error, operation);
             default:
                 throw CreateError(error, operation);
         }
@@ -221,7 +240,8 @@ internal sealed class AlsaOutputStream : IAudioOutputStream
 
         if (result < 0)
         {
-            Check(_api.Prepare(_handle), "Recovering from an ALSA suspension");
+            CheckStream(result, "Resuming a suspended ALSA device", allowOtherErrors: true);
+            CheckStream(_api.Prepare(_handle), "Recovering from an ALSA suspension");
         }
 
         _suspended = false;
@@ -245,6 +265,26 @@ internal sealed class AlsaOutputStream : IAudioOutputStream
         {
             throw CreateError(result, operation);
         }
+    }
+
+    private void CheckStream(int result, string operation, bool allowOtherErrors = false)
+    {
+        if (result is NoDevice or InvalidDevice)
+        {
+            _deviceLost = true;
+            throw CreateDeviceLostError(result, operation);
+        }
+
+        if (!allowOtherErrors)
+        {
+            Check(result, operation);
+        }
+    }
+
+    private AudioDeviceLostException CreateDeviceLostError(int error, string operation)
+    {
+        InvalidOperationException cause = CreateError(error, operation);
+        return new AudioDeviceLostException(cause.Message, cause);
     }
 
     private InvalidOperationException CreateError(int error, string operation) =>

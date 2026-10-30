@@ -172,4 +172,25 @@ public sealed class AudioEngineTests
         long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
         Assert.AreEqual(0L, allocated);
     }
+
+    [TestMethod]
+    public void SixtyFourVoicesAndPendingCommandsAllocateNothingOnRenderThread()
+    {
+        using var clip = WaveTestData.Clip([1000, -1000]);
+        using var engine = AudioEngine.CreateOffline();
+        var voices = new VoiceHandle[64];
+        for (int i = 0; i < voices.Length; i++)
+        {
+            voices[i] = engine.Play(clip, .5f, loop: true);
+        }
+
+        float[] output = new float[256];
+        for (int i = 0; i < 2000; i++) { engine.Render(output); }
+        foreach (VoiceHandle voice in voices) { Assert.IsTrue(engine.SetVolume(voice, .25f)); }
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        for (int i = 0; i < 2000; i++) { engine.Render(output); }
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.AreEqual(0L, allocated);
+        CollectionAssert.AreEqual(new[] { 64 * 1000f / 32768f * .25f, 64 * 1000f / 32768f * .25f }, output[..2]);
+    }
 }

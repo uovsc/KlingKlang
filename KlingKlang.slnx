@@ -1,4 +1,7 @@
 <Solution>
+  <Folder Name="/benchmarks/">
+    <Project Path="benchmarks/KlingKlang.Benchmarks/KlingKlang.Benchmarks.csproj" />
+  </Folder>
   <Folder Name="/samples/">
     <Project Path="samples/KlingKlang.Demo/KlingKlang.Demo.csproj" />
     <Project Path="samples/KlingKlang.LiveDemo/KlingKlang.LiveDemo.csproj" />

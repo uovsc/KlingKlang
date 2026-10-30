@@ -93,6 +93,22 @@ public sealed class AudioQueueOutputStreamTests
     }
 
     [TestMethod]
+    public void ClassifiesInvalidDeviceAndDisposesWithoutStoppingItAgain()
+    {
+        var api = new FakeAudioQueue();
+        var stream = new AudioQueueOutputStream(api);
+        stream.Write(new float[stream.BufferFrames * 2], stream.BufferFrames);
+        stream.Start();
+        api.Complete(0);
+        api.EnqueueResult = -66680;
+        Assert.ThrowsExactly<AudioDeviceLostException>(() => stream.Write(new float[960 * 2], 960));
+        stream.Dispose();
+        Assert.AreEqual(0, api.StopCalls);
+        Assert.AreEqual(1, api.DisposeCalls);
+        Assert.AreEqual(0, api.LiveAllocations);
+    }
+
+    [TestMethod]
     public void RejectsInvalidAndUnavailableBufferWrites()
     {
         var api = new FakeAudioQueue();
@@ -140,6 +156,7 @@ public sealed class AudioQueueOutputStreamTests
         public AudioStreamDescription Format { get; private set; }
         public int FailAllocationAt { get; init; }
         public int StopResult { get; init; }
+        public int EnqueueResult { get; set; }
         public int StopCalls { get; private set; }
         public int DisposeCalls { get; private set; }
         public int LiveAllocations => _data.Count;
@@ -170,7 +187,7 @@ public sealed class AudioQueueOutputStreamTests
             return 0;
         }
 
-        public int Enqueue(IntPtr queue, IntPtr buffer) { Enqueued.Add(buffer); return 0; }
+        public int Enqueue(IntPtr queue, IntPtr buffer) { Enqueued.Add(buffer); return EnqueueResult; }
         public int Start(IntPtr queue) => 0;
         public int Stop(IntPtr queue) { StopCalls++; return StopResult; }
         public int Dispose(IntPtr queue)

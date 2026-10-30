@@ -5,7 +5,7 @@ internal sealed class NullAudioDevice : IAudioDevice
     private AudioRenderCallback? _render;
     private bool _disposed;
 
-    public Exception? Failure => null;
+    public AudioDeviceStatus Status => AudioDeviceStatus.Ready;
 
     public void Start(AudioRenderCallback render)
     {
