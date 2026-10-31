@@ -131,6 +131,15 @@ The backend must report negotiated sample rate/channel format, provide a steady 
 - Reject invalid or unsupported sample rates and output sizes with a clear error; rates below 8 kHz or above 48 kHz are outside this milestone.
 - Add hardware-independent tests for each listed rate, covering detection, playback duration and pitch, mono/stereo ordering and looping boundaries. Preserve existing 48 kHz behavior.
 
+### M5 — MP3 loading (planned)
+
+- Add `AudioClip.LoadMp3` for paths and readable streams, and `AudioEngine.LoadMp3` for paths. Preserve existing `LoadWav` behavior and leave caller-owned streams open.
+- Consider a separate generic `Load` API that detects supported file types from their content rather than their extension. If added, it must also work with non-seekable streams; its exact API remains to be decided.
+- Support MP3 (MPEG Layer III) decoding for common constant- and variable-bitrate files, including files with and without metadata. Document the supported MPEG versions, sample rates, channel counts, and handling of encoder delay and padding; reject unsupported or malformed input with clear errors.
+- Decode at load time into the existing 48 kHz in-memory `AudioClip` format. Playback, looping and mixing should reuse the existing engine without decoding on the audio thread. Streaming large assets is not part of this milestone.
+- Preserve the deployment goals: no third-party runtime NuGet dependencies, bundled native binaries, or separately installed codecs. Evaluate the decoder approach and its maintenance cost; measure and document the DLL size change.
+- Add hardware-independent tests using known decoded reference samples, including mono/stereo, bitrate and metadata cases, duration, looping, non-seekable streams, and malformed or truncated files. Verify existing WAV behavior remains unchanged.
+
 ## 9. Explicit risks and decisions to revisit
 
 - **Linux portability:** ALSA is a system library, not guaranteed everywhere. Avoid promising literally zero Linux prerequisites; consider PipeWire native support only if real user feedback warrants it.

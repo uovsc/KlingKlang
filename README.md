@@ -89,6 +89,14 @@ For offline rendering instead, use `AudioEngine.CreateOffline()` and call
   voice is still being mixed, not whether its last sample has reached the
   speakers. Disposing immediately after completion may cut off buffered audio.
 
+## Planned formats
+
+MP3 loading is a future milestone, not currently implemented. It proposes a
+`LoadMp3` API and considers a generic format-detecting `Load` API while
+preserving the library's deployment goals. Clips would still be fully decoded
+into memory; streaming is not planned for this milestone. See
+[M5 in the specification](SPEC.md#m5--mp3-loading-planned).
+
 ## Device loss and recovery
 
 `audio.ConnectionState` reports `Ready`, `Recovering`, `Faulted`, or `Disposed`
