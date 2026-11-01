@@ -8,6 +8,7 @@ and experimental live backends selected by `AudioEngine.Create()`.
 | Windows | WASAPI shared mode | User-confirmed Release DLL playback on Windows 11 Home under KVM on a Fedora 44 host: two WAV files were heard simultaneously. Guest architecture and virtual audio route were not reported; recovery was not tested. |
 | Linux | System ALSA `libasound.so.2` | Fedora 44 x86-64, kernel `7.2.11-200.fc44`, alsa-lib 1.2.16.1, ALSA `default` through PipeWire/pipewire-alsa 1.6.9 to the ALC1220 analog output: three open/play/close cycles and an active output link observed. Audible output was not independently confirmed. |
 | macOS | System Audio Queue Services | Simulated tests only; real macOS playback has not been tested. |
+| Android | AAudio planned | Not implemented or tested; see the [planned Android milestone](SPEC.md#m6--android-playback-planned). |
 
 These are not claims of support for other configurations. Testing on physical
 Windows hardware, a real-device smoke test on macOS, and audible confirmation
@@ -96,6 +97,15 @@ MP3 loading is a future milestone, not currently implemented. It proposes a
 preserving the library's deployment goals. Clips would still be fully decoded
 into memory; streaming is not planned for this milestone. See
 [M5 in the specification](SPEC.md#m5--mp3-loading-planned).
+
+## Planned Android playback
+
+The Android milestone targets Android 8.0 / API 26 and later using the
+OS-provided AAudio API. A consuming app will need a compatible .NET Android
+runtime, SDK and workload, which may require a newer Android version. The
+host app will manage audio focus and activity lifecycle; automatic
+pause/resume, ducking and background playback are not promised. Android
+playback is not implemented or verified on a device.
 
 ## Device loss and recovery
 

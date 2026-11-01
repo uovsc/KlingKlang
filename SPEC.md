@@ -8,11 +8,14 @@ This is an AI-assisted learning/hobby project. The first deliverable is a reliab
 
 ## 2. Supported environments
 
+Android is a future milestone, not part of v0.1 or current live playback.
+
 | Platform | Planned backend | Distribution assumption |
 | --- | --- | --- |
 | Windows (current supported desktop releases) | WASAPI shared mode | OS audio components already present |
 | macOS (current supported desktop releases) | Audio Queue Services / CoreAudio | OS frameworks already present |
 | Linux desktop | ALSA PCM | `libasound` and a working configured audio output must be available; PipeWire/PulseAudio compatibility depends on system configuration |
+| Android 8.0 / API 26 and later (planned) | AAudio, not yet implemented | OS-provided audio API; a compatible .NET Android app and runtime are required |
 
 Target framework for the initial project: `net10.0`. Use only the base class library and standard .NET interop at runtime. The consuming app still needs a compatible .NET runtime or self-contained .NET deployment. A portable managed DLL does not remove these OS/runtime requirements.
 
@@ -93,7 +96,7 @@ The backend must report negotiated sample rate/channel format, provide a steady 
 2. **Reliability:** Never read beyond sample buffers. Malformed assets return controlled exceptions. A failed device initialization does not leak handles or leave a thread running.
 3. **Latency:** Aim for responsive gameplay. A nominal 10–20 ms render block is a starting point, not a guarantee of end-to-end latency; measure the actual backend buffering.
 4. **Performance:** Support at least 64 concurrent short clips on ordinary desktop hardware without render-thread allocations, subject to benchmark verification.
-5. **Compatibility:** No compile-time platform-specific public types; backend selection via `OperatingSystem.IsWindows/IsLinux/IsMacOS`.
+5. **Compatibility:** No compile-time platform-specific public types; desktop backend selection via `OperatingSystem.IsWindows/IsLinux/IsMacOS`. Android selection is planned in M6.
 6. **Observability:** Provide non-realtime-safe diagnostics for startup failures and counts of underruns/voices without logging directly from the audio render path.
 
 ## 8. Milestones and acceptance criteria
@@ -139,6 +142,15 @@ The backend must report negotiated sample rate/channel format, provide a steady 
 - Decode at load time into the existing 48 kHz in-memory `AudioClip` format. Playback, looping and mixing should reuse the existing engine without decoding on the audio thread. Streaming large assets is not part of this milestone.
 - Preserve the deployment goals: no third-party runtime NuGet dependencies, bundled native binaries, or separately installed codecs. Evaluate the decoder approach and its maintenance cost; measure and document the DLL size change.
 - Add hardware-independent tests using known decoded reference samples, including mono/stereo, bitrate and metadata cases, duration, looping, non-seekable streams, and malformed or truncated files. Verify existing WAV behavior remains unchanged.
+
+### M6 — Android playback (planned)
+
+- Add live playback on Android 8.0 / API 26 and later using the OS-provided AAudio C API. A consuming app needs a compatible .NET Android runtime, SDK and workload; their supported Android versions may be more restrictive. Report unsupported versions and initialization failures clearly, without silently selecting the null device or desktop ALSA backend.
+- Select the Android backend in `AudioEngine.Create()` while preserving `CreateOffline()` and the existing platform-neutral public API, mixer and playback behavior. Keep the core `net10.0` target, with no third-party runtime NuGet dependencies, bundled native audio binaries or separate audio installation.
+- Negotiate and verify the device stream format, converting the 48 kHz stereo mix as needed or reporting unsupported configurations. Handle short writes or callback buffering as appropriate, device disconnection and recovery, startup failures and safe shutdown. Preserve the audio-thread allocation and locking requirements; verify native callback and resource lifetimes against Android's API contract.
+- The host app manages audio focus and activity lifecycle, including stopping voices or disposing and recreating the engine as appropriate. Document this contract and the available APIs; do not promise automatic ducking, pause/resume, background playback or preservation of stopped voice positions.
+- Add hardware-independent tests for Android backend selection, format handling, partial output, disconnect and recovery, failures and disposal. Preserve existing desktop and offline behavior.
+- Provide Android app integration and smoke-test instructions. On a real Android device, verify audible playback, overlapping voices, volume, looping, stop and disposal, repeated open/close, host lifecycle handling, and an output-route change or interruption where feasible. Record the device, OS/API version, architecture, .NET runtime, audio route, results and remaining gaps. Compilation or emulation alone does not establish device support.
 
 ## 9. Explicit risks and decisions to revisit
 

@@ -1,7 +1,7 @@
 cls
 
 $root = (Get-Location).Path
-$extensions = @('.cs', '.xml', '.js', '.axaml')
+$extensions = @('.cs', '.xml', '.js', '.axaml', '.md')
 $excludePathPattern = '\\(bin|obj|\.git|installer)\\'
 
 $files = Get-ChildItem -Path $root -Recurse -File |

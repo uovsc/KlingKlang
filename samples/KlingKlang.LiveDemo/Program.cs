@@ -9,7 +9,7 @@ if (args.Length != 1)
 
 AudioClip clip = AudioClip.LoadWav(args[0]);
 AudioEngine audio = AudioEngine.Create();
-bool isFullPlay = true;
+bool isFullPlay = false;
 try
 {
     if(isFullPlay)
